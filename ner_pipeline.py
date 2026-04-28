@@ -1,6 +1,5 @@
 """
-Module 6 Week A — Lab: NER Pipeline
-
+# Lab 6A — NER Pipeline (spaCy vs Hugging Face)
 Build and compare Named Entity Recognition pipelines using spaCy
 and Hugging Face on climate-related text data.
 
