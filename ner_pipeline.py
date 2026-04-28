@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 import spacy
 from transformers import pipeline as hf_pipeline
-import seaborn as sns
+
 
 
 def load_data(filepath="data/climate_articles.csv"):
@@ -83,7 +83,7 @@ def extract_spacy_entities(df, nlp):
     rows = []
     english_df = df[df["language"] == "en"]
 
-    VALID_LABELS = {"PERSON", "ORG", "GPE", "DATE", "EVENT"}
+    VALID_LABELS = {"PERSON", "ORG", "GPE", "DATE", "EVENT", "LOWER", "MONEY", "NORP", "FAC", "LOC", "PRODUCT", "WORK_OF_ART"}
 
     for _, r in english_df.iterrows():
         text_id = r["id"]
@@ -92,9 +92,6 @@ def extract_spacy_entities(df, nlp):
         doc = nlp(text)
 
         for ent in doc.ents:
-            if ent.label_ not in VALID_LABELS:
-                continue
-
             rows.append({
                 "text_id": text_id,
                 "entity_text": ent.text.strip(),
@@ -453,6 +450,7 @@ def error_analysis(pred_df, gold_df):
 
     
 if __name__ == "__main__":
+    import seaborn as sns
 
     import matplotlib.pyplot as plt
     # Load spaCy and HF models once, reuse across functions
@@ -571,33 +569,33 @@ if __name__ == "__main__":
 
     counts_spacy = entity_counts_by_category(df, spacy_entities)
 
-plt.figure(figsize=(10, 6))
-sns.heatmap(counts_spacy, annot=True, fmt="d", cmap="Blues")
-plt.title("spaCy Entity Distribution by Category")
-plt.xlabel("Entity Label")
-plt.ylabel("Category")
-plt.tight_layout()
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(counts_spacy, annot=True, fmt="d", cmap="Blues")
+    plt.title("spaCy Entity Distribution by Category")
+    plt.xlabel("Entity Label")
+    plt.ylabel("Category")
+    plt.tight_layout()
 
-plt.savefig("spacy_heatmap.png")
-plt.show()
-
-
+    plt.savefig("spacy_heatmap.png")
+    plt.show()
 
 
 
 
-counts_hf = entity_counts_by_category(df, hf_entities)
-
-plt.figure(figsize=(10, 6))
-sns.heatmap(counts_hf, annot=True, fmt="d", cmap="Greens")
-plt.title("HF Entity Distribution by Category")
-plt.xlabel("Entity Label")
-plt.ylabel("Category")
-plt.tight_layout()
-
-plt.savefig("hf_heatmap.png")
-plt.show()
 
 
-                # =========================
+    counts_hf = entity_counts_by_category(df, hf_entities)
+
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(counts_hf, annot=True, fmt="d", cmap="Greens")
+    plt.title("HF Entity Distribution by Category")
+    plt.xlabel("Entity Label")
+    plt.ylabel("Category")
+    plt.tight_layout()
+
+    plt.savefig("hf_heatmap.png")
+    plt.show()
+
+
+                    # =========================
 
