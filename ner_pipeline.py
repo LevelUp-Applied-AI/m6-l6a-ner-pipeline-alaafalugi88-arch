@@ -1,16 +1,16 @@
 """
-Module 6 Week A — Lab: NER Pipeline
-
+# Lab 6A — NER Pipeline (spaCy vs Hugging Face)
 Build and compare Named Entity Recognition pipelines using spaCy
 and Hugging Face on climate-related text data.
 
 Run: python ner_pipeline.py
 """
-
+import unicodedata
 import pandas as pd
 import numpy as np
 import spacy
 from transformers import pipeline as hf_pipeline
+
 
 
 def load_data(filepath="data/climate_articles.csv"):
@@ -23,7 +23,8 @@ def load_data(filepath="data/climate_articles.csv"):
         DataFrame with columns: id, text, source, language, category.
     """
     # TODO: Load the CSV and return the DataFrame
-    pass
+    cv = pd.read_csv(filepath)
+    return cv
 
 
 def explore_data(df):
@@ -41,7 +42,17 @@ def explore_data(df):
     """
     # TODO: Compute shape, language/category value_counts, and word-count
     #       statistics on df['text']
-    pass
+    text_lengths = df['text'].apply(lambda x: len(str(x).split()))
+    return {
+        'shape': df.shape,
+        'lang_counts': df['language'].value_counts().to_dict(),
+        'category_counts': df['category'].value_counts().to_dict(),
+        'text_length_stats': {
+            'mean': text_lengths.mean(),
+            'min': text_lengths.min(),
+            'max': text_lengths.max()
+        },
+    }
 
 
 def preprocess_text(text, nlp):
@@ -59,24 +70,82 @@ def preprocess_text(text, nlp):
     """
     # TODO: NFC-normalize the text, run it through nlp(), drop
     #       punctuation/whitespace tokens, return lowercased lemmas
-    pass
+    text = unicodedata.normalize("NFC", text)
+    doc = nlp(text)
+    tokens =[]
+    for token in doc:
+        if not token.is_punct and not token.is_space:
+            tokens.append(token.lemma_.lower())
+    return tokens
 
 
 def extract_spacy_entities(df, nlp):
-    """Extract named entities from English texts using spaCy NER.
+    rows = []
+    english_df = df[df["language"] == "en"]
 
-    Args:
-        df: DataFrame with columns id, text, language, ...
-        nlp: A loaded spaCy Language object.
+    VALID_LABELS = {"PERSON", "ORG", "GPE", "DATE", "EVENT", "LOWER", "MONEY", "NORP", "FAC", "LOC", "PRODUCT", "WORK_OF_ART"}
 
-    Returns:
-        DataFrame with columns: text_id, entity_text, entity_label,
-        start_char, end_char.
-    """
-    # TODO: Filter df to English rows, process each text with nlp,
-    #       collect entities into rows, return as a DataFrame
-    pass
+    for _, r in english_df.iterrows():
+        text_id = r["id"]
+        text = str(r["text"]).strip()
 
+        doc = nlp(text)
+
+        for ent in doc.ents:
+            rows.append({
+                "text_id": text_id,
+                "entity_text": ent.text.strip(),
+                "entity_label": ent.label_,
+                "start_char": ent.start_char,
+                "end_char": ent.end_char
+            })
+
+    return pd.DataFrame(rows)
+
+
+
+
+
+
+
+
+def merge_hr_entities(raw_entities):
+    merged = []
+    current_entity = None
+
+    for ent in raw_entities:
+       
+        label = ent.get('entity_group') or ent.get('entity')
+
+        if label is None:
+            continue
+
+        if current_entity is None:
+            current_entity = {
+                'entity_text': ent['word'],
+                'entity_label': label,
+                'start_char': ent['start'],
+                'end_char': ent['end']
+            }
+        else:
+          
+            if label == current_entity['entity_label']:
+                current_entity['entity_text'] += ' ' + ent['word']
+                current_entity['end_char'] = ent['end']
+            else:
+                merged.append(current_entity)
+                current_entity = {
+                    'entity_text': ent['word'],
+                    'entity_label': label,
+                    'start_char': ent['start'],
+                    'end_char': ent['end']
+                }
+
+    
+    if current_entity is not None:
+        merged.append(current_entity)
+
+    return merged
 
 def extract_hf_entities(df, ner_pipeline):
     """Extract named entities from English texts using Hugging Face NER.
@@ -94,7 +163,32 @@ def extract_hf_entities(df, ner_pipeline):
     # TODO: Filter df to English rows, run each text through
     #       ner_pipeline, merge ## subword tokens, strip B-/I- prefix
     #       from labels (IOB format), return as a DataFrame
-    pass
+    
+    rows = []
+    english_df = df[df["language"] == "en"]
+
+    for _, row in english_df.iterrows():
+        text_id = row["id"]
+        text = row["text"]
+
+        raw_entities = ner_pipeline(text)
+        merged_entities = merge_hr_entities(raw_entities)
+
+        for ent in merged_entities:
+            label = ent['entity_label']
+
+            if label.startswith("B-") or label.startswith("I-"):
+                label = label[2:]
+
+            rows.append({
+                "text_id": text_id,
+                "entity_text": ent['entity_text'],
+                "entity_label": label,
+                "start_char": ent['start_char'],
+                "end_char": ent['end_char']
+            })
+
+    return pd.DataFrame(rows)
 
 
 def compare_ner_outputs(spacy_df, hf_df):
@@ -117,34 +211,255 @@ def compare_ner_outputs(spacy_df, hf_df):
     # TODO: Count entities per label for each system, compute totals,
     #       and derive the three overlap sets by matching on
     #       (text_id, entity_text)
-    pass
+    spacy_counts = spacy_df['entity_label'].value_counts().to_dict()
+    hf_counts = hf_df['entity_label'].value_counts().to_dict()
+    total_spacy = len(spacy_df)
+    total_hf = len(hf_df)  
+    spacy_set = set(zip(spacy_df['text_id'], spacy_df['entity_text']))
+    hf_set = set(zip(hf_df['text_id'], hf_df['entity_text']))
+    both = spacy_set.intersection(hf_set)
+    spacy_only = spacy_set.difference(hf_set)
+    hf_only = hf_set.difference(spacy_set)
+    return {
+        'spacy_counts': spacy_counts,
+        'hf_counts': hf_counts,
+        'total_spacy': total_spacy,
+        'total_hf': total_hf,
+        'both': both,
+        'spacy_only': spacy_only,
+        'hf_only': hf_only,
+    }   
+
+
+def normalize_text(text):
+    return str(text).lower().strip()
 
 
 def evaluate_ner(predicted_df, gold_df):
-    """Evaluate NER predictions against gold-standard annotations.
+    predicted_set = set(
+        (tid, normalize_text(text), label)
+        for tid, text, label in zip(
+            predicted_df['text_id'],
+            predicted_df['entity_text'],
+            predicted_df['entity_label']
+        )
+    )
 
-    Computes entity-level precision, recall, and F1. An entity is a
-    true positive if both the entity text and label match a gold entry
-    for the same text_id.
+    gold_set = set(
+        (tid, normalize_text(text), label)
+        for tid, text, label in zip(
+            gold_df['text_id'],
+            gold_df['entity_text'],
+            gold_df['entity_label']
+        )
+    )
 
-    Args:
-        predicted_df: DataFrame with columns text_id, entity_text,
-                      entity_label.
-        gold_df: DataFrame with columns text_id, entity_text,
-                 entity_label.
+    true_positives = predicted_set.intersection(gold_set)
 
-    Returns:
-        Dictionary with keys: 'precision', 'recall', 'f1' (floats 0-1).
-    """
-    # TODO: Match predicted entities to gold entities by text_id +
-    #       entity_text + entity_label, compute precision/recall/F1
-    pass
+    precision = len(true_positives) / len(predicted_set) if predicted_set else 0
+    recall = len(true_positives) / len(gold_set) if gold_set else 0
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+
+    return {
+        'precision': precision,
+        'recall': recall,
+        'f1': f1,
+    }
 
 
+def entity_counts_by_category(df, entities_df):
+    merged = df.merge(entities_df, left_on="id", right_on="text_id")
+
+    counts = (
+        merged.groupby(["category", "entity_label"])
+        .size()
+        .unstack(fill_value=0)
+    )
+
+    return counts
+
+
+def evaluate_per_category(df, entities_df, gold_df):
+    merged_pred = df.merge(entities_df, left_on="id", right_on="text_id")
+    merged_gold = df.merge(gold_df, left_on="id", right_on="text_id")
+
+    results = {}
+
+    for category in merged_pred["category"].unique():
+        pred = merged_pred[merged_pred["category"] == category]
+        gold = merged_gold[merged_gold["category"] == category]
+
+        metrics = evaluate_ner(pred, gold)
+        results[category] = metrics
+
+    return results
+
+
+def entity_cooccurrence(entities_df):
+    from itertools import combinations
+    from collections import Counter
+
+    co = Counter()
+
+    for tid, group in entities_df.groupby("text_id"):
+        entities = list(set(group["entity_text"]))
+
+        for pair in combinations(entities, 2):
+            co[tuple(sorted(pair))] += 1
+
+    return co
+
+def compute_entity_tfidf(entities_df):
+    from collections import Counter
+    import math
+
+    docs = entities_df.groupby("text_id")["entity_text"].apply(list)
+
+    tf = {}
+    df_count = Counter()
+
+    for tid, ents in docs.items():
+        tf[tid] = Counter(ents)
+        for e in set(ents):
+            df_count[e] += 1
+
+    N = len(docs)
+
+    tfidf = {}
+
+    for tid in tf:
+        tfidf[tid] = {}
+        for e in tf[tid]:
+            tf_val = tf[tid][e]
+            idf = math.log(N / (1 + df_count[e]))
+            tfidf[tid][e] = tf_val * idf
+
+    return tfidf
+
+
+def exact_match(pred, gold):
+    """Check if predicted and gold entities match exactly (text and label)."""
+    return (normalize_text(pred["entity_text"]) == normalize_text(gold["entity_text"]) and
+            pred["entity_label"] == gold["entity_label"])
+
+
+def partial_match(pred, gold):
+    """Check if predicted and gold entities overlap in character span."""
+    pred_start = pred["start_char"]
+    pred_end = pred["end_char"]
+    gold_start = gold["start_char"]
+    gold_end = gold["end_char"]
+    return not (pred_end < gold_start or pred_start > gold_end)
+
+
+def type_agnostic_match(pred, gold):
+    """Check if predicted and gold entities match on text only (ignoring label)."""
+    return normalize_text(pred["entity_text"]) == normalize_text(gold["entity_text"])
+
+
+def compute_metrics(tp, fp, fn):
+    """Compute precision, recall, and F1 from confusion matrix values."""
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+    return {
+        'precision': precision,
+        'recall': recall,
+        'f1': f1,
+    }
+
+
+
+
+def evaluate_advanced(pred_df, gold_df, match_type="exact"):
+    tp = 0
+    fp = 0
+    fn = 0
+
+    matched = set()
+
+    for i, p in pred_df.iterrows():
+        found = False
+
+        for j, g in gold_df.iterrows():
+            if j in matched:
+                continue
+
+            if match_type == "exact" and exact_match(p, g):
+                found = True
+            elif match_type == "partial" and partial_match(p, g):
+                found = True
+            elif match_type == "type" and type_agnostic_match(p, g):
+                found = True
+
+            if found:
+                tp += 1
+                matched.add(j)
+                break
+
+        if not found:
+            fp += 1
+
+    fn = len(gold_df) - len(matched)
+    return compute_metrics(tp, fp, fn)
+
+
+
+
+
+
+
+def error_analysis(pred_df, gold_df):
+    errors = {
+        "boundary": 0,
+        "type": 0,
+        "missing": 0,
+        "spurious": 0
+    }
+
+    matched = set()
+
+    for i, p in pred_df.iterrows():
+        found = False
+
+        for j, g in gold_df.iterrows():
+            if j in matched:
+                continue
+
+            if partial_match(p, g):
+                if p["entity_label"] != g["entity_label"]:
+                    errors["type"] += 1
+                else:
+                    errors["boundary"] += 1
+
+                matched.add(j)
+                found = True
+                break
+
+        if not found:
+            errors["spurious"] += 1
+
+    errors["missing"] = len(gold_df) - len(matched)
+
+    return errors
+
+
+
+
+
+
+    
 if __name__ == "__main__":
+    import seaborn as sns
+
+    import matplotlib.pyplot as plt
     # Load spaCy and HF models once, reuse across functions
     nlp = spacy.load("en_core_web_sm")
-    hf_ner = hf_pipeline("ner", model="dslim/bert-base-NER")
+    hf_ner = hf_pipeline(
+        "ner",
+        model="dslim/bert-base-NER",
+        aggregation_strategy="simple"
+    )
 
     # Load and explore
     df = load_data()
@@ -186,3 +501,101 @@ if __name__ == "__main__":
             metrics = evaluate_ner(spacy_entities, gold)
             if metrics is not None:
                 print(f"\nspaCy evaluation: {metrics}")
+        if hf_entities is not None:
+            metrics = evaluate_ner(hf_entities, gold)
+            if metrics is not None:
+                print(f"\nHF evaluation: {metrics}")
+
+
+    counts = entity_counts_by_category(df, spacy_entities)
+    print("\nEntity Counts by Category:")
+    print(counts)
+
+
+
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(counts, annot=True, fmt="d", cmap="Blues")
+    plt.title("Entity Distribution by Category")
+    plt.xlabel("Entity Label")
+    plt.ylabel("Category")
+    plt.tight_layout()
+
+
+    plt.savefig("entity_heatmap.png")
+
+    plt.show()
+
+
+    cat_eval = evaluate_per_category(df, spacy_entities, gold)
+
+    print("\nEvaluation per Category:")
+    for cat, metrics in cat_eval.items():
+        print(cat, metrics)
+
+
+    co = entity_cooccurrence(spacy_entities)
+
+    print("\nTop Co-occurrences:")
+    for pair, count in list(co.items())[:10]:
+        print(pair, count)
+
+
+    tfidf = compute_entity_tfidf(spacy_entities)
+
+    print("\nSample TF-IDF:")
+    for tid in list(tfidf.keys())[:2]:
+        print(tid, list(tfidf[tid].items())[:5])
+
+
+    advanced_exact = evaluate_advanced(spacy_entities, gold, "exact")
+    advanced_partial = evaluate_advanced(spacy_entities, gold, "partial")
+    advanced_type = evaluate_advanced(spacy_entities, gold, "type")
+
+    print("\nAdvanced Evaluation:")
+    print("Exact:", advanced_exact)
+    print("Partial:", advanced_partial)
+    print("Type-Agnostic:", advanced_type)
+
+
+    errors = error_analysis(spacy_entities, gold)
+
+    print("\nError Analysis:")
+    print(errors)
+
+
+
+
+
+
+    counts_spacy = entity_counts_by_category(df, spacy_entities)
+
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(counts_spacy, annot=True, fmt="d", cmap="Blues")
+    plt.title("spaCy Entity Distribution by Category")
+    plt.xlabel("Entity Label")
+    plt.ylabel("Category")
+    plt.tight_layout()
+
+    plt.savefig("spacy_heatmap.png")
+    plt.show()
+
+
+
+
+
+
+    counts_hf = entity_counts_by_category(df, hf_entities)
+
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(counts_hf, annot=True, fmt="d", cmap="Greens")
+    plt.title("HF Entity Distribution by Category")
+    plt.xlabel("Entity Label")
+    plt.ylabel("Category")
+    plt.tight_layout()
+
+    plt.savefig("hf_heatmap.png")
+    plt.show()
+
+
+                    # =========================
+
